@@ -1,218 +1,729 @@
-const fileInput = document.getElementById("fileInput");
-const dropArea = document.getElementById("dropArea");
-const uploadButton = document.getElementById("uploadButton");
+let currentShareCode = null;
+let scannerStream = null;
+let scannerInterval = null;
 
-const selectedFile = document.getElementById("selectedFile");
-const progressBar = document.getElementById("progressBar");
-const statusText = document.getElementById("status");
+// ==========================================
+// ELEMENTS
+// ==========================================
 
-let file = null;
+const createShareBtn =
+    document.getElementById("createShareBtn");
+
+const senderArea =
+    document.getElementById("senderArea");
+
+const shareCode =
+    document.getElementById("shareCode");
+
+const fileInput =
+    document.getElementById("fileInput");
+
+const uploadBtn =
+    document.getElementById("uploadBtn");
+
+const uploadStatus =
+    document.getElementById("uploadStatus");
+
+const senderFiles =
+    document.getElementById("senderFiles");
+
+const codeInput =
+    document.getElementById("codeInput");
+
+const findShareBtn =
+    document.getElementById("findShareBtn");
+
+const scanBtn =
+    document.getElementById("scanBtn");
+
+const scannerArea =
+    document.getElementById("scannerArea");
+
+const scannerVideo =
+    document.getElementById("scannerVideo");
+
+const scannerStatus =
+    document.getElementById("scannerStatus");
+
+const stopScannerBtn =
+    document.getElementById("stopScannerBtn");
+
+const receiverArea =
+    document.getElementById("receiverArea");
+
+const receiverFiles =
+    document.getElementById("receiverFiles");
 
 
-// Select file
-fileInput.addEventListener("change", () => {
+// ==========================================
+// CREATE SHARE
+// ==========================================
 
-    if (fileInput.files.length > 0) {
+createShareBtn.addEventListener(
+    "click",
+    async () => {
 
-        file = fileInput.files[0];
+        try {
 
-        showSelectedFile();
+            createShareBtn.disabled = true;
+
+            createShareBtn.textContent =
+                "Creating...";
+
+            const response =
+                await fetch("/api/create-share", {
+                    method: "POST"
+                });
+
+            const data =
+                await response.json();
+
+            if (!data.success) {
+                throw new Error(
+                    "Could not create share"
+                );
+            }
+
+            currentShareCode =
+                data.code;
+
+            shareCode.textContent =
+                currentShareCode;
+
+            senderArea.classList.remove(
+                "hidden"
+            );
+
+            createQRCode(
+                currentShareCode
+            );
+
+            createShareBtn.textContent =
+                "Share Created";
+
+        } catch (error) {
+
+            console.error(error);
+
+            alert(
+                "Unable to create share."
+            );
+
+            createShareBtn.disabled = false;
+
+            createShareBtn.textContent =
+                "Create Share";
+        }
     }
-
-});
-
-
-// Drag and drop
-dropArea.addEventListener("dragover", (event) => {
-
-    event.preventDefault();
-
-    dropArea.classList.add("dragover");
-
-});
+);
 
 
-dropArea.addEventListener("dragleave", () => {
+// ==========================================
+// CREATE QR CODE
+// ==========================================
 
-    dropArea.classList.remove("dragover");
+function createQRCode(code) {
 
-});
+    const qrContainer =
+        document.getElementById("qrcode");
 
+    qrContainer.innerHTML = "";
 
-dropArea.addEventListener("drop", (event) => {
+    const shareURL =
+        window.location.origin +
+        "/?code=" +
+        code;
 
-    event.preventDefault();
-
-    dropArea.classList.remove("dragover");
-
-    if (event.dataTransfer.files.length > 0) {
-
-        file = event.dataTransfer.files[0];
-
-        showSelectedFile();
-    }
-
-});
-
-
-// Show selected file
-function showSelectedFile() {
-
-    selectedFile.innerHTML =
-        `📄 <strong>${file.name}</strong>
-        (${formatSize(file.size)})`;
-
+    new QRCode(
+        qrContainer,
+        {
+            text: shareURL,
+            width: 200,
+            height: 200
+        }
+    );
 }
 
 
-// Send file
-uploadButton.addEventListener("click", () => {
+// ==========================================
+// UPLOAD FILES
+// ==========================================
 
-    if (!file) {
+uploadBtn.addEventListener(
+    "click",
+    async () => {
 
-        statusText.textContent =
-            "Please select a file first.";
+        if (!currentShareCode) {
 
-        return;
-    }
+            alert(
+                "Create a share first."
+            );
 
-
-    const formData = new FormData();
-
-    formData.append("file", file);
-
-
-    const xhr = new XMLHttpRequest();
-
-    xhr.open("POST", "/upload");
-
-
-    // Upload progress
-    xhr.upload.addEventListener("progress", (event) => {
-
-        if (event.lengthComputable) {
-
-            const percent =
-                (event.loaded / event.total) * 100;
-
-            progressBar.style.width =
-                percent + "%";
-
-            statusText.textContent =
-                `Uploading ${Math.round(percent)}%`;
+            return;
         }
 
-    });
+        if (
+            !fileInput.files ||
+            fileInput.files.length === 0
+        ) {
+
+            alert(
+                "Please select at least one file."
+            );
+
+            return;
+        }
+
+        try {
+
+            uploadBtn.disabled = true;
+
+            uploadBtn.textContent =
+                "Uploading...";
+
+            uploadStatus.textContent =
+                "Uploading files...";
 
 
-    // Upload finished
-    xhr.addEventListener("load", () => {
+            const formData =
+                new FormData();
 
-        if (xhr.status === 200) {
+            for (
+                const file of fileInput.files
+            ) {
 
-            statusText.textContent =
-                "✅ File sent successfully!";
+                formData.append(
+                    "files",
+                    file
+                );
+            }
 
-            progressBar.style.width = "100%";
 
-            loadFiles();
+            const response =
+                await fetch(
+                    `/api/upload/${currentShareCode}`,
+                    {
+                        method: "POST",
+                        body: formData
+                    }
+                );
 
-        } else {
 
-            statusText.textContent =
+            const data =
+                await response.json();
+
+
+            if (!data.success) {
+
+                throw new Error(
+                    data.message ||
+                    "Upload failed"
+                );
+            }
+
+
+            uploadStatus.textContent =
+                "✅ Files uploaded successfully!";
+
+
+            fileInput.value = "";
+
+
+            loadSenderFiles();
+
+        } catch (error) {
+
+            console.error(error);
+
+            uploadStatus.textContent =
                 "❌ Upload failed.";
 
+            alert(
+                error.message
+            );
+
+        } finally {
+
+            uploadBtn.disabled = false;
+
+            uploadBtn.textContent =
+                "Upload Files";
         }
-
-    });
-
-
-    // Network error
-    xhr.addEventListener("error", () => {
-
-        statusText.textContent =
-            "❌ Network error.";
-
-    });
+    }
+);
 
 
-    xhr.send(formData);
+// ==========================================
+// LOAD SENDER FILES
+// ==========================================
 
-});
+async function loadSenderFiles() {
 
-
-// Load received files
-async function loadFiles() {
+    if (!currentShareCode) {
+        return;
+    }
 
     try {
 
         const response =
-            await fetch("/files");
+            await fetch(
+                `/api/share/${currentShareCode}`
+            );
 
-        const files =
+        const data =
             await response.json();
 
+        if (
+            !data.success ||
+            data.files.length === 0
+        ) {
 
-        const fileList =
-            document.getElementById("fileList");
-
-
-        if (files.length === 0) {
-
-            fileList.innerHTML =
-                "No files received yet.";
+            senderFiles.textContent =
+                "No files uploaded yet.";
 
             return;
         }
 
 
-        fileList.innerHTML = "";
+        senderFiles.innerHTML = "";
 
 
-        files.forEach((filename) => {
+        data.files.forEach(
+            file => {
 
-            const item =
-                document.createElement("div");
+                const div =
+                    document.createElement(
+                        "div"
+                    );
 
-            item.className =
-                "file-item";
+                div.className =
+                    "file-item";
+
+                div.innerHTML = `
+                    <span>
+                        📄 ${escapeHTML(file.name)}
+                    </span>
+
+                    <span>
+                        ${formatBytes(file.size)}
+                    </span>
+                `;
+
+                senderFiles.appendChild(
+                    div
+                );
+            }
+        );
+
+    } catch (error) {
+
+        console.error(error);
+    }
+}
 
 
-            item.innerHTML = `
+// ==========================================
+// FIND SHARE USING CODE
+// ==========================================
 
-                <span>📄 ${filename}</span>
+findShareBtn.addEventListener(
+    "click",
+    () => {
 
-                <a
-                    class="download-button"
-                    href="/download/${encodeURIComponent(filename)}"
-                >
-                    Download
-                </a>
-
-            `;
+        const code =
+            codeInput.value.trim();
 
 
-            fileList.appendChild(item);
+        if (!/^\d{6}$/.test(code)) {
 
-        });
+            alert(
+                "Please enter a valid 6-digit code."
+            );
+
+            return;
+        }
+
+
+        loadReceiverFiles(code);
+    }
+);
+
+
+// ==========================================
+// LOAD RECEIVER FILES
+// ==========================================
+
+async function loadReceiverFiles(code) {
+
+    try {
+
+        findShareBtn.disabled = true;
+
+        findShareBtn.textContent =
+            "Searching...";
+
+
+        const response =
+            await fetch(
+                `/api/share/${code}`
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (!data.success) {
+
+            throw new Error(
+                data.message ||
+                "Share not found"
+            );
+        }
+
+
+        receiverArea.classList.remove(
+            "hidden"
+        );
+
+
+        if (
+            !data.files ||
+            data.files.length === 0
+        ) {
+
+            receiverFiles.innerHTML =
+                "<p>No files available yet.</p>";
+
+            return;
+        }
+
+
+        receiverFiles.innerHTML = "";
+
+
+        data.files.forEach(
+            file => {
+
+                const div =
+                    document.createElement(
+                        "div"
+                    );
+
+                div.className =
+                    "receiver-file";
+
+
+                div.innerHTML = `
+                    <div>
+                        <strong>
+                            📄 ${escapeHTML(file.name)}
+                        </strong>
+
+                        <br>
+
+                        <small>
+                            ${formatBytes(file.size)}
+                        </small>
+                    </div>
+
+                    <a
+                        class="download-btn"
+                        href="/api/download/${encodeURIComponent(code)}/${encodeURIComponent(file.id)}"
+                    >
+                        Download
+                    </a>
+                `;
+
+
+                receiverFiles.appendChild(
+                    div
+                );
+            }
+        );
 
 
     } catch (error) {
 
         console.error(error);
 
-    }
+        receiverArea.classList.add(
+            "hidden"
+        );
 
+        alert(
+            error.message ||
+            "Unable to find share."
+        );
+
+    } finally {
+
+        findShareBtn.disabled = false;
+
+        findShareBtn.textContent =
+            "Find Files";
+    }
 }
 
 
-// Format file size
-function formatSize(bytes) {
+// ==========================================
+// QR SCANNER
+// ==========================================
+
+scanBtn.addEventListener(
+    "click",
+    startScanner
+);
+
+
+async function startScanner() {
+
+    if (
+        !("BarcodeDetector" in window)
+    ) {
+
+        alert(
+            "QR scanning is not supported by this browser. Please use Chrome or another supported browser."
+        );
+
+        return;
+    }
+
+
+    try {
+
+        scannerArea.classList.remove(
+            "hidden"
+        );
+
+
+        scannerStatus.textContent =
+            "Starting camera...";
+
+
+        scannerStream =
+            await navigator.mediaDevices.getUserMedia(
+                {
+                    video: {
+                        facingMode: {
+                            ideal: "environment"
+                        }
+                    }
+                }
+            );
+
+
+        scannerVideo.srcObject =
+            scannerStream;
+
+
+        const barcodeDetector =
+            new BarcodeDetector({
+                formats: ["qr_code"]
+            });
+
+
+        scannerStatus.textContent =
+            "Point your camera at the QR code.";
+
+
+        scannerInterval =
+            setInterval(
+                async () => {
+
+                    try {
+
+                        const barcodes =
+                            await barcodeDetector.detect(
+                                scannerVideo
+                            );
+
+
+                        if (
+                            barcodes.length === 0
+                        ) {
+                            return;
+                        }
+
+
+                        const value =
+                            barcodes[0].rawValue;
+
+
+                        handleScannedQR(
+                            value
+                        );
+
+
+                    } catch (error) {
+
+                        console.error(
+                            error
+                        );
+                    }
+
+                },
+                500
+            );
+
+
+    } catch (error) {
+
+        console.error(error);
+
+        scannerStatus.textContent =
+            "Camera permission was denied or the camera could not be opened.";
+    }
+}
+
+
+// ==========================================
+// HANDLE SCANNED QR
+// ==========================================
+
+function handleScannedQR(value) {
+
+    stopScanner();
+
+
+    try {
+
+        const url =
+            new URL(value);
+
+
+        const code =
+            url.searchParams.get(
+                "code"
+            );
+
+
+        if (
+            code &&
+            /^\d{6}$/.test(code)
+        ) {
+
+            codeInput.value =
+                code;
+
+            loadReceiverFiles(
+                code
+            );
+
+            return;
+        }
+
+    } catch (error) {
+
+        console.log(
+            "QR is not a URL"
+        );
+    }
+
+
+    if (
+        /^\d{6}$/.test(value)
+    ) {
+
+        codeInput.value =
+            value;
+
+        loadReceiverFiles(
+            value
+        );
+
+        return;
+    }
+
+
+    alert(
+        "This QR code is not a Local File Share code."
+    );
+}
+
+
+// ==========================================
+// STOP SCANNER
+// ==========================================
+
+stopScannerBtn.addEventListener(
+    "click",
+    stopScanner
+);
+
+
+function stopScanner() {
+
+    if (scannerInterval) {
+
+        clearInterval(
+            scannerInterval
+        );
+
+        scannerInterval = null;
+    }
+
+
+    if (scannerStream) {
+
+        scannerStream
+            .getTracks()
+            .forEach(
+                track =>
+                    track.stop()
+            );
+
+        scannerStream = null;
+    }
+
+
+    scannerVideo.srcObject =
+        null;
+
+
+    scannerArea.classList.add(
+        "hidden"
+    );
+}
+
+
+// ==========================================
+// AUTO READ CODE FROM URL
+// ==========================================
+
+const urlParams =
+    new URLSearchParams(
+        window.location.search
+    );
+
+
+const urlCode =
+    urlParams.get("code");
+
+
+if (
+    urlCode &&
+    /^\d{6}$/.test(urlCode)
+) {
+
+    codeInput.value =
+        urlCode;
+
+    loadReceiverFiles(
+        urlCode
+    );
+}
+
+
+// ==========================================
+// HELPERS
+// ==========================================
+
+function formatBytes(bytes) {
 
     if (bytes === 0) {
         return "0 Bytes";
     }
-
 
     const units = [
         "Bytes",
@@ -222,23 +733,49 @@ function formatSize(bytes) {
         "TB"
     ];
 
-
-    const index =
+    const i =
         Math.floor(
             Math.log(bytes) /
             Math.log(1024)
         );
 
-
     return (
-        bytes /
-        Math.pow(1024, index)
-    ).toFixed(2) +
-    " " +
-    units[index];
-
+        parseFloat(
+            (
+                bytes /
+                Math.pow(
+                    1024,
+                    i
+                )
+            ).toFixed(2)
+        ) +
+        " " +
+        units[i]
+    );
 }
 
 
-// Load files when page opens
-loadFiles();
+function escapeHTML(value) {
+
+    return String(value)
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+        .replace(
+            /</g,
+            "&lt;"
+        )
+        .replace(
+            />/g,
+            "&gt;"
+        )
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+        .replace(
+            /'/g,
+            "&#039;"
+        );
+}

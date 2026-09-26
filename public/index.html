@@ -4,115 +4,245 @@
 <head>
     <meta charset="UTF-8">
 
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
     <title>Local File Share</title>
 
-    <link rel="stylesheet" href="style.css">
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
 </head>
 
 <body>
 
     <div class="container">
 
-        <h1>📁 Local File Share</h1>
+        <header>
 
-        <p class="subtitle">
-            Send files between computers on the same Wi-Fi
-        </p>
+            <h1>📁 Local File Share</h1>
+
+            <p>
+                Share files using a 6-digit code or QR code
+            </p>
+
+        </header>
 
 
-        <!-- Upload Box -->
+        <!-- ============================= -->
+        <!-- SEND FILES -->
+        <!-- ============================= -->
 
-        <div class="card">
+        <section class="card">
 
-            <div id="dropArea" class="drop-area">
+            <h2>📤 Send Files</h2>
 
-                <div class="upload-icon">
-                    📤
+            <p class="description">
+                Create a share code and upload your files.
+            </p>
+
+            <button
+                id="createShareBtn"
+                class="primary-btn"
+            >
+                Create Share
+            </button>
+
+
+            <div
+                id="senderArea"
+                class="hidden"
+            >
+
+                <div class="code-box">
+
+                    <p>Your Share Code</p>
+
+                    <div
+                        id="shareCode"
+                        class="share-code"
+                    >
+                        ------
+                    </div>
+
+                    <p class="small-text">
+                        Give this code to the receiver
+                    </p>
+
                 </div>
 
-                <h2>
-                    Drop your file here
-                </h2>
 
-                <p>
-                    or
-                </p>
+                <div class="qr-section">
 
-                <label class="choose-button">
+                    <h3>Scan QR Code</h3>
 
-                    Choose File
+                    <div id="qrcode"></div>
+
+                    <p class="small-text">
+                        Receiver can scan this QR code
+                    </p>
+
+                </div>
+
+
+                <div class="upload-area">
 
                     <input
                         type="file"
                         id="fileInput"
-                        hidden
+                        multiple
                     >
 
-                </label>
+                    <button
+                        id="uploadBtn"
+                        class="primary-btn"
+                    >
+                        Upload Files
+                    </button>
+
+                </div>
+
+
+                <div id="uploadStatus"></div>
+
+
+                <div>
+
+                    <h3>Files in this share</h3>
+
+                    <div id="senderFiles">
+                        No files uploaded yet.
+                    </div>
+
+                </div>
 
             </div>
 
-
-            <!-- Selected file -->
-
-            <div
-                id="selectedFile"
-                class="selected-file">
-            </div>
+        </section>
 
 
-            <!-- Send button -->
+        <!-- ============================= -->
+        <!-- RECEIVE FILES -->
+        <!-- ============================= -->
 
-            <button
-                id="uploadButton"
-                class="upload-button">
+        <section class="card">
 
-                Send File
+            <h2>📥 Receive Files</h2>
 
-            </button>
+            <p class="description">
+                Enter a 6-digit code or scan a QR code.
+            </p>
 
 
-            <!-- Progress -->
+            <div class="receive-methods">
 
-            <div class="progress-container">
+                <div>
 
-                <div
-                    id="progressBar"
-                    class="progress-bar">
+                    <h3>Enter Code</h3>
+
+                    <input
+                        type="text"
+                        id="codeInput"
+                        maxlength="6"
+                        inputmode="numeric"
+                        placeholder="6-digit code"
+                    >
+
+                    <button
+                        id="findShareBtn"
+                        class="secondary-btn"
+                    >
+                        Find Files
+                    </button>
+
+                </div>
+
+
+                <div class="divider">
+                    OR
+                </div>
+
+
+                <div>
+
+                    <h3>Scan QR</h3>
+
+                    <button
+                        id="scanBtn"
+                        class="secondary-btn"
+                    >
+                        📷 Scan QR Code
+                    </button>
+
                 </div>
 
             </div>
 
 
-            <!-- Status -->
+            <!-- QR SCANNER -->
 
-            <p
-                id="status"
-                class="status">
-            </p>
+            <div
+                id="scannerArea"
+                class="hidden"
+            >
 
-        </div>
+                <video
+                    id="scannerVideo"
+                    autoplay
+                    playsinline
+                ></video>
 
+                <p id="scannerStatus">
+                    Point your camera at the QR code.
+                </p>
 
-        <!-- Received files -->
-
-        <div class="card">
-
-            <h2>
-                📥 Received Files
-            </h2>
-
-            <div id="fileList">
-
-                Loading...
+                <button
+                    id="stopScannerBtn"
+                    class="danger-btn"
+                >
+                    Stop Scanner
+                </button>
 
             </div>
 
-        </div>
+
+            <!-- RECEIVED FILES -->
+
+            <div
+                id="receiverArea"
+                class="hidden"
+            >
+
+                <h3>
+                    Available Files
+                </h3>
+
+                <div id="receiverFiles"></div>
+
+            </div>
+
+        </section>
+
+
+        <footer>
+
+            <p>
+                Local File Share
+            </p>
+
+        </footer>
 
     </div>
+
+
+    <!-- QR CODE LIBRARY -->
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
+    ></script>
 
 
     <script src="app.js"></script>

@@ -3,25 +3,49 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const crypto = require("crypto");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-// Folder where received files will be saved
-const receivedFolder = path.join(__dirname, "received");
+// ==========================================
+// STORAGE
+// ==========================================
+
+const receivedFolder = process.env.VERCEL
+    ? path.join("/tmp", "received")
+    : path.join(__dirname, "received");
 
 if (!fs.existsSync(receivedFolder)) {
-    fs.mkdirSync(receivedFolder);
+    fs.mkdirSync(receivedFolder, { recursive: true });
 }
 
-// File storage settings
+// ==========================================
+// SHARE DATA
+// ==========================================
+
+const shares = new Map();
+
+// ==========================================
+// MULTER
+// ==========================================
+
 const storage = multer.diskStorage({
+
     destination: function (req, file, cb) {
         cb(null, receivedFolder);
     },
 
     filename: function (req, file, cb) {
-        cb(null, path.basename(file.originalname));
+
+        const safeName = path.basename(file.originalname);
+
+        const uniqueName =
+            crypto.randomBytes(8).toString("hex") +
+            "-" +
+            safeName;
+
+        cb(null, uniqueName);
     }
 });
 
@@ -29,94 +53,240 @@ const upload = multer({
     storage: storage
 });
 
-// Website files
+// ==========================================
+// WEBSITE
+// ==========================================
+
 app.use(express.static(path.join(__dirname, "public")));
 
-// Receive file
-app.post("/upload", upload.single("file"), (req, res) => {
+app.use(express.json());
 
-    if (!req.file) {
-        return res.status(400).json({
-            success: false,
-            message: "No file received"
-        });
-    }
+// ==========================================
+// CREATE SHARE
+// ==========================================
 
-    console.log("Received:", req.file.originalname);
+app.post("/api/create-share", (req, res) => {
+
+    let code;
+
+    do {
+        code = Math.floor(100000 + Math.random() * 900000).toString();
+    } while (shares.has(code));
+
+    shares.set(code, {
+        files: [],
+        createdAt: Date.now()
+    });
+
+    console.log("Created share:", code);
 
     res.json({
         success: true,
-        filename: req.file.originalname,
-        size: req.file.size
+        code: code
     });
 });
 
-// Get received files
-app.get("/files", (req, res) => {
+// ==========================================
+// UPLOAD FILE TO SHARE
+// ==========================================
 
-    fs.readdir(receivedFolder, (err, files) => {
+app.post(
+    "/api/upload/:code",
+    upload.array("files"),
+    (req, res) => {
 
-        if (err) {
-            return res.status(500).json({
-                error: "Unable to read files"
+        const code = req.params.code;
+
+        const share = shares.get(code);
+
+        if (!share) {
+            return res.status(404).json({
+                success: false,
+                message: "Share code not found"
             });
         }
 
-        res.json(files);
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "No files received"
+            });
+        }
+
+        req.files.forEach(file => {
+
+            share.files.push({
+                id: file.filename,
+                name: file.originalname,
+                size: file.size
+            });
+
+        });
+
+        console.log(
+            "Uploaded",
+            req.files.length,
+            "file(s) to",
+            code
+        );
+
+        res.json({
+            success: true,
+            files: share.files
+        });
+    }
+);
+
+// ==========================================
+// GET SHARE
+// ==========================================
+
+app.get("/api/share/:code", (req, res) => {
+
+    const code = req.params.code;
+
+    const share = shares.get(code);
+
+    if (!share) {
+        return res.status(404).json({
+            success: false,
+            message: "Invalid or expired code"
+        });
+    }
+
+    res.json({
+        success: true,
+        code: code,
+        files: share.files
     });
 });
 
-// Download file
-app.get("/download/:filename", (req, res) => {
+// ==========================================
+// DOWNLOAD FILE
+// ==========================================
 
-    const filename = path.basename(req.params.filename);
+app.get(
+    "/api/download/:code/:fileId",
+    (req, res) => {
 
-    const filePath =
-        path.join(receivedFolder, filename);
+        const code = req.params.code;
+        const fileId = path.basename(req.params.fileId);
 
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).send("File not found");
+        const share = shares.get(code);
+
+        if (!share) {
+            return res.status(404).send(
+                "Share code not found"
+            );
+        }
+
+        const file = share.files.find(
+            item => item.id === fileId
+        );
+
+        if (!file) {
+            return res.status(404).send(
+                "File not found"
+            );
+        }
+
+        const filePath = path.join(
+            receivedFolder,
+            file.id
+        );
+
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).send(
+                "File no longer exists"
+            );
+        }
+
+        res.download(
+            filePath,
+            file.name
+        );
     }
+);
 
-    res.download(filePath);
+// ==========================================
+// HEALTH CHECK
+// ==========================================
+
+app.get("/api/health", (req, res) => {
+
+    res.json({
+        success: true,
+        message: "Local File Share is running"
+    });
+
 });
 
-// Find this computer's IP address
-function getLocalIP() {
+// ==========================================
+// LOCAL SERVER
+// ==========================================
 
-    const interfaces = os.networkInterfaces();
+if (!process.env.VERCEL) {
 
-    for (const name of Object.keys(interfaces)) {
+    function getLocalIP() {
 
-        for (const network of interfaces[name]) {
+        const interfaces =
+            os.networkInterfaces();
 
-            if (
-                network.family === "IPv4" &&
-                !network.internal
+        for (
+            const name of Object.keys(interfaces)
+        ) {
+
+            for (
+                const network of interfaces[name]
             ) {
-                return network.address;
+
+                if (
+                    network.family === "IPv4" &&
+                    !network.internal
+                ) {
+                    return network.address;
+                }
+
             }
         }
+
+        return "localhost";
     }
 
-    return "localhost";
+    app.listen(
+        PORT,
+        "0.0.0.0",
+        () => {
+
+            const ip = getLocalIP();
+
+            console.log("");
+            console.log(
+                "================================="
+            );
+            console.log(
+                "       LOCAL FILE SHARE"
+            );
+            console.log(
+                "================================="
+            );
+            console.log("");
+
+            console.log(
+                `This PC: http://localhost:${PORT}`
+            );
+
+            console.log(
+                `Network: http://${ip}:${PORT}`
+            );
+
+            console.log("");
+            console.log(
+                "Server is running..."
+            );
+            console.log("");
+        }
+    );
 }
 
-// Start server
-app.listen(PORT, "0.0.0.0", () => {
-
-    const ip = getLocalIP();
-
-    console.log("");
-    console.log("=================================");
-    console.log("       LOCAL FILE SHARE");
-    console.log("=================================");
-    console.log("");
-
-    console.log(`This PC: http://localhost:${PORT}`);
-    console.log(`Network: http://${ip}:${PORT}`);
-
-    console.log("");
-    console.log("Server is running...");
-    console.log("");
-});
+module.exports = app;
