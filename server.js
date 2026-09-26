@@ -2,17 +2,16 @@ const express = require("express");
 const path = require("path");
 const crypto = require("crypto");
 
-const {
-  list,
-  issueSignedToken,
-  presignUrl,
-} = require("@vercel/blob");
+const { list } = require("@vercel/blob");
+const { handleUpload } = require("@vercel/blob/client");
 
 const app = express();
 
-app.use(express.json({ limit: "1mb" }));
+// Vercel Blob client-upload requests are JSON.
+// Keep JSON parsing enabled.
+app.use(express.json());
 
-// Always serve the website
+// Serve the website
 app.use(express.static(path.join(__dirname, "public")));
 
 // ==========================================
@@ -53,88 +52,96 @@ app.post("/api/create-share", (req, res) => {
 });
 
 // ==========================================
-// CREATE SIGNED UPLOAD URL
+// VERCEL BLOB CLIENT UPLOAD
 // ==========================================
 
-app.post("/api/upload-url", async (req, res) => {
+app.post("/api/upload", async (req, res) => {
   try {
-    const { code, filename } = req.body;
+    const body = req.body;
 
-    // Check code
-    if (!/^\d{6}$/.test(code || "")) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid 6-digit share code",
-      });
-    }
+    const jsonResponse = await handleUpload({
+      body,
+      request: req,
 
-    // Check filename
-    if (
-      typeof filename !== "string" ||
-      filename.trim().length === 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid filename",
-      });
-    }
-
-    // Remove dangerous path characters
-    const cleanName = path
-      .basename(filename.replace(/\\/g, "/"))
-      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
-      .trim();
-
-    if (!cleanName) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid filename",
-      });
-    }
-
-    // Unique file name
-    const randomId = crypto
-      .randomBytes(8)
-      .toString("hex");
-
-    const pathname =
-      `shares/${code}/${randomId}-${cleanName}`;
-
-    // Create a token that only allows PUT to this
-    // specific pathname for 15 minutes.
-    const token = await issueSignedToken({
-      pathname,
-      operations: ["put"],
-      validUntil:
-        Date.now() + 15 * 60 * 1000,
-    });
-
-    const { presignedUrl } =
-      await presignUrl(token, {
+      onBeforeGenerateToken: async (
         pathname,
-        operation: "put",
-        validUntil:
-          Date.now() + 15 * 60 * 1000,
-      });
+        clientPayload
+      ) => {
 
-    res.json({
-      success: true,
-      pathname,
-      uploadUrl: presignedUrl,
-      filename: cleanName,
+        let payload = {};
+
+        try {
+          payload = clientPayload
+            ? JSON.parse(clientPayload)
+            : {};
+        } catch {
+          payload = {};
+        }
+
+        const code = payload.code;
+
+        // Only allow our 6-digit share folders
+        if (!/^\d{6}$/.test(code || "")) {
+          throw new Error(
+            "Invalid share code"
+          );
+        }
+
+        // Make sure the file is stored inside
+        // the correct share folder.
+        if (
+          !pathname.startsWith(
+            `shares/${code}/`
+          )
+        ) {
+          throw new Error(
+            "Invalid upload path"
+          );
+        }
+
+        return {
+          access: "private",
+
+          addRandomSuffix: true,
+
+          allowedPathnamePrefix:
+            `shares/${code}/`,
+
+          tokenPayload: JSON.stringify({
+            code,
+          }),
+        };
+      },
+
+      onUploadCompleted: async ({
+        blob,
+        tokenPayload,
+      }) => {
+        console.log(
+          "Upload completed:",
+          blob.pathname
+        );
+
+        console.log(
+          "Share:",
+          tokenPayload
+        );
+      },
     });
+
+    return res.json(jsonResponse);
 
   } catch (error) {
     console.error(
-      "Create upload URL error:",
+      "Vercel Blob upload error:",
       error
     );
 
-    res.status(500).json({
+    return res.status(400).json({
       success: false,
       error:
         error.message ||
-        "Could not create upload URL",
+        "Could not prepare upload",
     });
   }
 });
@@ -154,27 +161,17 @@ app.get("/api/share/:code", async (req, res) => {
   }
 
   try {
-    const prefix = `shares/${code}/`;
-
     const result = await list({
-      prefix,
+      prefix: `shares/${code}/`,
       limit: 1000,
     });
 
     const files = result.blobs.map((blob) => {
-      const fullName =
-        blob.pathname.split("/").pop();
 
-      // Remove our random ID from the displayed name
-      const dashIndex =
-        fullName.indexOf("-");
-
-      const displayName =
-        dashIndex !== -1
-          ? fullName.substring(
-              dashIndex + 1
-            )
-          : fullName;
+      const filename =
+        blob.pathname
+          .split("/")
+          .pop();
 
       const fileId =
         Buffer.from(
@@ -183,9 +180,10 @@ app.get("/api/share/:code", async (req, res) => {
 
       return {
         id: fileId,
-        name: displayName,
+        name: filename,
         size: blob.size,
-        uploadedAt: blob.uploadedAt,
+        uploadedAt:
+          blob.uploadedAt,
       };
     });
 
@@ -209,73 +207,87 @@ app.get("/api/share/:code", async (req, res) => {
 });
 
 // ==========================================
-// CREATE SIGNED DOWNLOAD URL
+// DOWNLOAD
 // ==========================================
 
 app.get(
   "/api/download/:code/:fileId",
   async (req, res) => {
-    const code = req.params.code;
-    const fileId = req.params.fileId;
+
+    const code =
+      req.params.code;
+
+    const fileId =
+      req.params.fileId;
 
     if (!/^\d{6}$/.test(code)) {
-      return res.status(400).json({
-        error: "Invalid share code",
-      });
+      return res.status(400).send(
+        "Invalid share code"
+      );
     }
 
     try {
+
       const pathname =
         Buffer.from(
           fileId,
           "base64url"
         ).toString("utf8");
 
-      // SECURITY CHECK
+      // Security check
       if (
         !pathname.startsWith(
           `shares/${code}/`
         )
       ) {
-        return res.status(403).json({
-          error: "Access denied",
-        });
+        return res.status(403).send(
+          "Access denied"
+        );
       }
 
-      // Signed URL valid for 10 minutes
-      const token =
-        await issueSignedToken({
+      // Redirect the browser to a temporary
+      // signed Blob download URL.
+      const { createReadStream } =
+        await import("@vercel/blob");
+
+      const result =
+        await createReadStream(
           pathname,
-          operations: ["get"],
-          validUntil:
-            Date.now() +
-            10 * 60 * 1000,
-        });
+          {
+            access: "private",
+          }
+        );
 
-      const { presignedUrl } =
-        await presignUrl(token, {
-          pathname,
-          operation: "get",
-          validUntil:
-            Date.now() +
-            10 * 60 * 1000,
+      if (!result) {
+        return res.status(404).send(
+          "File not found"
+        );
+      }
 
-          // Make sure a newly uploaded file
-          // is immediately available.
-          useCache: false,
-        });
+      res.setHeader(
+        "Content-Type",
+        "application/octet-stream"
+      );
 
-      res.redirect(presignedUrl);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${path.basename(
+          pathname
+        )}"`
+      );
+
+      result.pipe(res);
 
     } catch (error) {
+
       console.error(
-        "Download URL error:",
+        "Download error:",
         error
       );
 
-      res.status(500).json({
-        error: "Could not create download link",
-      });
+      res.status(500).send(
+        "Could not download file"
+      );
     }
   }
 );
@@ -291,16 +303,28 @@ module.exports = app;
 // ==========================================
 
 if (!process.env.VERCEL) {
+
   const PORT = 3000;
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log("");
-    console.log("LOCAL FILE SHARE");
-    console.log("");
-    console.log(
-      `This PC: http://localhost:${PORT}`
-    );
-    console.log("");
-    console.log("Server is running...");
-  });
+  app.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
+
+      console.log("");
+      console.log(
+        "LOCAL FILE SHARE"
+      );
+      console.log("");
+
+      console.log(
+        `This PC: http://localhost:${PORT}`
+      );
+
+      console.log("");
+      console.log(
+        "Server is running..."
+      );
+    }
+  );
 }

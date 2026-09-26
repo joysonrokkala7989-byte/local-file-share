@@ -4,6 +4,26 @@ let scannerStream = null;
 let scannerInterval = null;
 
 // ==========================================
+// LOAD VERCEL BLOB CLIENT
+// ==========================================
+
+let blobUpload = null;
+
+async function loadBlobUploader() {
+  if (blobUpload) {
+    return blobUpload;
+  }
+
+  const blobClient = await import(
+    "https://esm.sh/@vercel/blob/client"
+  );
+
+  blobUpload = blobClient.upload;
+
+  return blobUpload;
+}
+
+// ==========================================
 // ELEMENTS
 // ==========================================
 
@@ -64,49 +84,39 @@ createShareBtn.addEventListener(
   async () => {
     try {
       createShareBtn.disabled = true;
-      createShareBtn.textContent =
-        "Creating...";
+      createShareBtn.textContent = "Creating...";
 
-      const response =
-        await fetch(
-          "/api/create-share",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-          }
-        );
+      const response = await fetch(
+        "/api/create-share",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
 
-      const data =
-        await response.json();
+      const data = await response.json();
 
-      if (!data.success) {
+      if (!response.ok || !data.success) {
         throw new Error(
-          data.error ||
-          "Could not create share"
+          data.error || "Could not create share"
         );
       }
 
-      currentShareCode =
-        data.code;
+      currentShareCode = data.code;
 
       shareCode.textContent =
         currentShareCode;
 
-      senderArea.classList.remove(
-        "hidden"
-      );
+      senderArea.classList.remove("hidden");
 
-      createQRCode(
-        currentShareCode
-      );
+      createQRCode(currentShareCode);
 
       createShareBtn.textContent =
         "Share Created";
 
-      loadSenderFiles();
+      await loadSenderFiles();
 
     } catch (error) {
       console.error(error);
@@ -117,7 +127,6 @@ createShareBtn.addEventListener(
       );
 
       createShareBtn.disabled = false;
-
       createShareBtn.textContent =
         "Create Share";
     }
@@ -125,14 +134,12 @@ createShareBtn.addEventListener(
 );
 
 // ==========================================
-// CREATE QR CODE
+// QR CODE
 // ==========================================
 
 function createQRCode(code) {
   const qrContainer =
-    document.getElementById(
-      "qrcode"
-    );
+    document.getElementById("qrcode");
 
   if (!qrContainer) {
     return;
@@ -147,7 +154,7 @@ function createQRCode(code) {
 
   if (typeof QRCode === "undefined") {
     qrContainer.innerHTML =
-      "<p>QR library is loading...</p>";
+      "<p>QR code library is loading...</p>";
 
     return;
   }
@@ -164,12 +171,12 @@ function createQRCode(code) {
 
 // ==========================================
 // UPLOAD FILES
-// DIRECTLY TO VERCEL BLOB
 // ==========================================
 
 uploadBtn.addEventListener(
   "click",
   async () => {
+
     if (!currentShareCode) {
       alert(
         "Please create a share first."
@@ -192,6 +199,8 @@ uploadBtn.addEventListener(
       uploadBtn.textContent =
         "Uploading...";
 
+      const upload = await loadBlobUploader();
+
       const files =
         Array.from(fileInput.files);
 
@@ -205,70 +214,48 @@ uploadBtn.addEventListener(
         uploadStatus.textContent =
           `Preparing ${i + 1} of ${files.length}: ${file.name}`;
 
-        // Ask our server for a temporary
-        // signed PUT URL.
-        const urlResponse =
-          await fetch(
-            "/api/upload-url",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-              body: JSON.stringify({
-                code:
-                  currentShareCode,
-                filename:
-                  file.name,
+        /*
+         * The browser asks our server for a
+         * temporary Vercel Blob client token.
+         *
+         * The large file itself does NOT go
+         * through the Vercel Function.
+         */
+
+        const result = await upload(
+          `shares/${currentShareCode}/${file.name}`,
+          file,
+          {
+            access: "private",
+
+            handleUploadUrl:
+              "/api/upload",
+
+            clientPayload:
+              JSON.stringify({
+                code: currentShareCode,
               }),
-            }
-          );
 
-        const urlData =
-          await urlResponse.json();
+            multipart: true,
 
-        if (
-          !urlResponse.ok ||
-          !urlData.success
-        ) {
-          throw new Error(
-            urlData.error ||
-            "Could not prepare upload"
-          );
-        }
+            onUploadProgress:
+              (progress) => {
 
-        uploadStatus.textContent =
-          `Uploading ${i + 1} of ${files.length}: ${file.name}`;
+                const percent =
+                  Math.round(
+                    progress.percentage
+                  );
 
-        // DIRECT upload:
-        // Browser -> Vercel Blob
-        //
-        // The large file does NOT pass
-        // through our Vercel Function.
-        const uploadResponse =
-          await fetch(
-            urlData.uploadUrl,
-            {
-              method: "PUT",
-              body: file,
-              headers: {
-                "Content-Type":
-                  file.type ||
-                  "application/octet-stream",
+                uploadStatus.textContent =
+                  `Uploading ${i + 1} of ${files.length}: ${file.name} — ${percent}%`;
               },
-            }
-          );
+          }
+        );
 
-        if (!uploadResponse.ok) {
-          const errorText =
-            await uploadResponse.text();
-
-          throw new Error(
-            errorText ||
-            `Upload failed (${uploadResponse.status})`
-          );
-        }
+        console.log(
+          "Uploaded:",
+          result
+        );
 
         uploadStatus.textContent =
           `✅ Uploaded ${i + 1} of ${files.length}: ${file.name}`;
@@ -322,7 +309,16 @@ async function loadSenderFiles() {
       await response.json();
 
     if (
-      !data.success ||
+      !response.ok ||
+      !data.success
+    ) {
+      throw new Error(
+        data.error ||
+        "Could not load files"
+      );
+    }
+
+    if (
       !data.files ||
       data.files.length === 0
     ) {
@@ -336,10 +332,9 @@ async function loadSenderFiles() {
 
     data.files.forEach(
       (file) => {
+
         const div =
-          document.createElement(
-            "div"
-          );
+          document.createElement("div");
 
         div.className =
           "file-item";
@@ -354,15 +349,13 @@ async function loadSenderFiles() {
           </span>
         `;
 
-        senderFiles.appendChild(
-          div
-        );
+        senderFiles.appendChild(div);
       }
     );
 
   } catch (error) {
     console.error(
-      "Load sender files error:",
+      "Sender files error:",
       error
     );
   }
@@ -375,6 +368,7 @@ async function loadSenderFiles() {
 findShareBtn.addEventListener(
   "click",
   async () => {
+
     const code =
       codeInput.value.trim();
 
@@ -394,9 +388,7 @@ findShareBtn.addEventListener(
 // LOAD RECEIVER FILES
 // ==========================================
 
-async function loadReceiverFiles(
-  code
-) {
+async function loadReceiverFiles(code) {
   try {
     findShareBtn.disabled = true;
 
@@ -439,10 +431,9 @@ async function loadReceiverFiles(
 
     data.files.forEach(
       (file) => {
+
         const div =
-          document.createElement(
-            "div"
-          );
+          document.createElement("div");
 
         div.className =
           "receiver-file";
@@ -472,13 +463,12 @@ async function loadReceiverFiles(
           </a>
         `;
 
-        receiverFiles.appendChild(
-          div
-        );
+        receiverFiles.appendChild(div);
       }
     );
 
   } catch (error) {
+
     console.error(error);
 
     receiverArea.classList.add(
@@ -491,6 +481,7 @@ async function loadReceiverFiles(
     );
 
   } finally {
+
     findShareBtn.disabled = false;
 
     findShareBtn.textContent =
@@ -508,17 +499,19 @@ scanBtn.addEventListener(
 );
 
 async function startScanner() {
+
   if (
     !("BarcodeDetector" in window)
   ) {
     alert(
-      "QR scanning is not supported by this browser. Please use Chrome on a supported device."
+      "QR scanning is not supported by this browser."
     );
 
     return;
   }
 
   try {
+
     scannerArea.classList.remove(
       "hidden"
     );
@@ -542,7 +535,7 @@ async function startScanner() {
 
     await scannerVideo.play();
 
-    const barcodeDetector =
+    const detector =
       new BarcodeDetector({
         formats: ["qr_code"],
       });
@@ -553,20 +546,22 @@ async function startScanner() {
     scannerInterval =
       setInterval(
         async () => {
+
           try {
-            const barcodes =
-              await barcodeDetector.detect(
+
+            const codes =
+              await detector.detect(
                 scannerVideo
               );
 
             if (
-              barcodes.length === 0
+              codes.length === 0
             ) {
               return;
             }
 
             const value =
-              barcodes[0].rawValue;
+              codes[0].rawValue;
 
             handleScannedQR(value);
 
@@ -576,11 +571,13 @@ async function startScanner() {
               error
             );
           }
+
         },
         500
       );
 
   } catch (error) {
+
     console.error(error);
 
     scannerStatus.textContent =
@@ -589,50 +586,44 @@ async function startScanner() {
 }
 
 // ==========================================
-// HANDLE SCANNED QR
+// HANDLE QR
 // ==========================================
 
-function handleScannedQR(
-  value
-) {
+function handleScannedQR(value) {
+
   stopScanner();
 
   try {
+
     const url =
       new URL(value);
 
     const code =
-      url.searchParams.get(
-        "code"
-      );
+      url.searchParams.get("code");
 
     if (
       code &&
       /^\d{6}$/.test(code)
     ) {
-      codeInput.value =
-        code;
 
-      loadReceiverFiles(
-        code
-      );
+      codeInput.value = code;
+
+      loadReceiverFiles(code);
 
       return;
     }
 
-  } catch (error) {
-    // Not a URL
+  } catch {
+    // QR was not a URL
   }
 
   if (
     /^\d{6}$/.test(value)
   ) {
-    codeInput.value =
-      value;
 
-    loadReceiverFiles(
-      value
-    );
+    codeInput.value = value;
+
+    loadReceiverFiles(value);
 
     return;
   }
@@ -652,7 +643,9 @@ stopScannerBtn.addEventListener(
 );
 
 function stopScanner() {
+
   if (scannerInterval) {
+
     clearInterval(
       scannerInterval
     );
@@ -661,19 +654,18 @@ function stopScanner() {
   }
 
   if (scannerStream) {
+
     scannerStream
       .getTracks()
       .forEach(
-        (track) =>
-          track.stop()
+        (track) => track.stop()
       );
 
     scannerStream = null;
   }
 
   if (scannerVideo) {
-    scannerVideo.srcObject =
-      null;
+    scannerVideo.srcObject = null;
   }
 
   scannerArea.classList.add(
@@ -682,7 +674,7 @@ function stopScanner() {
 }
 
 // ==========================================
-// AUTO READ CODE FROM URL
+// AUTO LOAD CODE FROM QR LINK
 // ==========================================
 
 const urlParams =
@@ -697,21 +689,18 @@ if (
   urlCode &&
   /^\d{6}$/.test(urlCode)
 ) {
-  codeInput.value =
-    urlCode;
 
-  loadReceiverFiles(
-    urlCode
-  );
+  codeInput.value = urlCode;
+
+  loadReceiverFiles(urlCode);
 }
 
 // ==========================================
 // HELPERS
 // ==========================================
 
-function formatBytes(
-  bytes
-) {
+function formatBytes(bytes) {
+
   if (
     !bytes ||
     bytes === 0
@@ -748,9 +737,8 @@ function formatBytes(
   );
 }
 
-function escapeHTML(
-  value
-) {
+function escapeHTML(value) {
+
   return String(value)
     .replace(
       /&/g,
